@@ -1,0 +1,4 @@
+TODO parce and response to ENDS(0)
+TODO Sign zone data with private keys (using libraries like ring, openssl, or rcgen)
+TODO Serve RRSIG, DNSKEY, and related records
+TODO Optionally validate signatures if acting as a resolver
