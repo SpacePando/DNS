@@ -1,51 +1,65 @@
 use std::net::UdpSocket;
-
 mod dns;
-use dns::{Header, Question};
-
-// Debug print hex bytes of a buffer 16 bytes width followed by the ASCII representation of the bytes
-fn debug_print_bytes(buf: &[u8]) {
-    for (i, chunk) in buf.chunks(16).enumerate() {
-        print!("{:08x}: ", i * 16);
-        for byte in chunk {
-            print!("{:02x} ", byte);
-        }
-        for _ in 0..(16 - chunk.len()) {
-            print!("   ");
-        }
-        print!("  ");
-        for byte in chunk {
-            if *byte >= 32 && *byte <= 126 {
-                print!("{}", *byte as char);
-            } else {
-                print!(".");
-            }
-        }
-        println!();
-    }
-}
+use dns::{Header, Question, ResourceRecord};
 
 fn main() {
-    let socket = UdpSocket::bind("0.0.0.0:1053").expect("Could not bind to port 1053");
-    let mut buf = [0; 512];
-
-    println!("DNS server is running at port 1053");
+    let socket = UdpSocket::bind("0.0.0.0:5300").expect("Unable to bind to UDP port 53");
+    println!("DNS server listening on port 53");
 
     loop {
-        let (len, addr) = socket.recv_from(&mut buf).expect("Could not receive data");
+        let mut buf = [0u8; 512];
+        let (len, addr) = match socket.recv_from(&mut buf) {
+            Ok(res) => res,
+            Err(e) => {
+                eprintln!("recv_from failed: {}", e);
+                continue;
+            }
+        };
 
-        println!("\nReceived query from {} with length {} bytes", addr, len);
-        println!("\n### DNS Query: ###");
-        debug_print_bytes(&buf[..len]);
+        let req = &buf[..len];
+        let (header, hlen) = match Header::from_bytes(req) {
+            Some(res) => res,
+            None => continue,
+        };
 
-        let header = Header::from_bytes(&buf[..12]).expect("Could not parse DNS header");
-        println!("\n{:?}", header);
+        if header.qdcount != 1 {
+            eprintln!("Unsupported QDCOUNT: {}", header.qdcount);
+            continue;
+        }
 
-        println!("\n### Question: ###");
-        debug_print_bytes(&buf[12..len]);
-        println!();
+        let (question, qlen) = match Question::from_bytes(&req[hlen..]) {
+            Some(res) => res,
+            None => continue,
+        };
 
-        let question = Question::from_bytes(&buf[12..len]).expect("Could not parse DNS question");
-        println!("\n{:?}", question);
+        println!("Received query: {:?}", question.qname);
+
+        // Build response header
+        let response_header = Header {
+            id: header.id,
+            flags: 0x8180, // Standard query response, no error
+            qdcount: 1,
+            ancount: 1,
+            nscount: 0,
+            arcount: 0,
+        };
+
+        // Hardcoded A record: 1.2.3.4
+        let answer = ResourceRecord {
+            name: question.qname.clone(),
+            rtype: 1,
+            rclass: 1,
+            ttl: 60,
+            rdata: "1.2.3.4".parse().unwrap(),
+        };
+
+        let mut response = Vec::new();
+        response.extend(response_header.to_bytes());
+        response.extend(question.to_bytes());
+        response.extend(answer.to_bytes());
+
+        if let Err(e) = socket.send_to(&response, addr) {
+            eprintln!("send_to failed: {}", e);
+        }
     }
-}   
+}
